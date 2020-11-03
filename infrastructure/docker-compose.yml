@@ -1,0 +1,15 @@
+version: '3'
+services: 
+    database:
+        image: postgres:latest
+        ports: 
+            - "5432:5432"
+        environment: 
+            - POSTGRES_PASSWORD=password 
+    elsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.5.1
+        ports: 
+            - "9200:9200"
+            - "9300:9300"
+        environment: 
+            - discovery.type=single-node
