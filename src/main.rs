@@ -1,38 +1,38 @@
 use dotenv::dotenv;
 use sqlx::{PgPool};
-use std::env;
+use std::{env};
 use anyhow::Result;
 use elasticsearch::{Elasticsearch, BulkParts};
 use serde_json::{json, Value};
 use serde::{Serialize};
 use elasticsearch::http::request::JsonBody;
 use std::time::Instant;
+use rayon::prelude::*;
 
-
-#[derive(Debug, Serialize)]
-pub struct Customer<'a> {
+#[derive(Debug, Serialize, Clone)]
+pub struct Customer<> {
     pub id: i64,
     pub description: String,
-    pub orders: Vec<&'a Order<'a>>
+    pub orders: Vec<Order>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct Order<'a> {
+#[derive(Debug, Serialize, Clone)]
+pub struct Order<> {
     pub id: i64,
     pub description: String,
     pub customer_id: i64,
-    pub items: Vec<&'a Item>
+    pub items: Vec<Item>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Item {
     pub id: i64,
     pub description: String,
-    pub order_id: i64
+    pub order_id: i64,
 }
 
 #[tokio::main]
-async fn main() -> Result<()>{
+async fn main() -> Result<()> {
     let now = Instant::now();
     dotenv().ok();
 
@@ -40,13 +40,13 @@ async fn main() -> Result<()>{
     let pool = PgPool::new(&database_url).await?;
 
     let custs = fetch_all_customers(&pool).await;
-    let mut customer_list = match custs {
+    let customer_list = match custs {
         Ok(custs) => custs,
-        _ => Vec::<Customer>::new() 
+        _ => Vec::<Customer>::new()
     };
 
     let ords = fetch_all_orders(&pool).await;
-    let mut order_list = match ords {
+    let order_list = match ords {
         Ok(ords) => ords,
         _ => Vec::<Order>::new()
     };
@@ -57,42 +57,46 @@ async fn main() -> Result<()>{
         _ => Vec::<Item>::new()
     };
 
-    println!("fetched all data after {} sec", now.elapsed().as_millis());
+    println!("fetched all data after {} milli_sec", now.elapsed().as_millis());
 
-    for order in &mut order_list {
-        let id = order.id;
-        for item in &items_list {
-            if id == item.order_id {
-                order.items.push(item);
-            }
-        }
-    }
+    let orders: Vec<Order> = order_list.par_iter().map(|order| sort_data_orders(order.clone(), &items_list)).collect();
+    println!("converted orders after {} milli_sec", now.elapsed().as_millis());
 
-    println!("converted orders after {} sec", now.elapsed().as_millis());
-
-    for customer in &mut customer_list {
-        let id = customer.id;
-        for order in &order_list {
-            if id == order.customer_id {
-               customer.orders.push(order);
-            }
-        }
-    }
-
+    let customers: Vec<Customer> = customer_list.par_iter().map(|x| sort_data_customers(x.clone(), &orders)).collect();
     println!("converted customers after {} sec", now.elapsed().as_millis());
+
+    println!("sorted all data after {} milli_sec", now.elapsed().as_millis());
 
     let client = Elasticsearch::default();
 
     println!("{:?}", client.ping());
 
-    bulk_insert_into_el(&client, customer_list,2000).await?;
+    bulk_insert_into_el(&client, customers, 2000).await?;
 
     println!("{}", now.elapsed().as_millis());
 
     Ok(())
 }
 
-async fn bulk_insert_into_el(client: &Elasticsearch, data: Vec<Customer<'_>>,size: usize) -> Result<()> {
+fn sort_data_customers(mut customer: Customer, order_list: &Vec<Order>) -> Customer {
+    for order in order_list {
+        if customer.id == order.customer_id {
+            customer.orders.push(order.clone())
+        }
+    }
+    customer
+}
+
+fn sort_data_orders(mut order: Order, items_list: &Vec<Item>) -> Order {
+    for item in items_list {
+        if order.id == item.order_id {
+            order.items.push(item.clone())
+        }
+    }
+    order
+}
+
+async fn bulk_insert_into_el(client: &Elasticsearch, data: Vec<Customer>, size: usize) -> Result<()> {
     let mut body: Vec<JsonBody<_>> = Vec::with_capacity(size);
 
     for (idx, customer) in data.iter().enumerate() {
@@ -114,7 +118,7 @@ async fn bulk_insert_into_el(client: &Elasticsearch, data: Vec<Customer<'_>>,siz
     Ok(())
 }
 
-async fn fetch_all_customers(pool: &PgPool) -> Result<Vec<Customer<'_>>> {
+async fn fetch_all_customers(pool: &PgPool) -> Result<Vec<Customer>> {
     let mut customers: Vec<Customer> = vec![];
 
     let recs = sqlx::query!(
@@ -124,14 +128,14 @@ FROM simple.customer
 ORDER BY id
         "#
     )
-    .fetch_all(pool)
-    .await?;
+        .fetch_all(pool)
+        .await?;
 
     for rec in recs {
         customers.push(Customer {
             id: rec.id,
             description: rec.description.unwrap(),
-            orders: Vec::<&Order>::new()
+            orders: Vec::<Order>::new(),
         }
         )
     }
@@ -139,7 +143,7 @@ ORDER BY id
     Ok(customers)
 }
 
-async fn fetch_all_orders(pool: &PgPool) -> Result<Vec<Order<'_>>> {
+async fn fetch_all_orders(pool: &PgPool) -> Result<Vec<Order>> {
     let mut orders: Vec<Order> = vec![];
 
     let recs = sqlx::query!(
@@ -157,7 +161,7 @@ ORDER BY id
             id: rec.id,
             description: rec.order_description.unwrap(),
             customer_id: rec.customer_id.unwrap(),
-            items: vec![]
+            items: vec![],
         }
         )
     }
@@ -182,7 +186,7 @@ ORDER BY id
         items.push(Item {
             id: rec.id,
             description: rec.item_description.unwrap(),
-            order_id: rec.order_id.unwrap()
+            order_id: rec.order_id.unwrap(),
         }
         )
     }
