@@ -8,17 +8,18 @@ use serde::{Serialize};
 use elasticsearch::http::request::JsonBody;
 use std::time::Instant;
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct Customer<> {
-    pub id: i64,
+    pub customer_id: i64,
     pub description: String,
     pub orders: Vec<Order>,
 }
 
 #[derive(Debug, Serialize, Clone)]
 pub struct Order<> {
-    pub id: i64,
+    pub order_id: i64,
     pub description: String,
     pub customer_id: i64,
     pub items: Vec<Item>,
@@ -26,7 +27,7 @@ pub struct Order<> {
 
 #[derive(Debug, Serialize, Clone)]
 pub struct Item {
-    pub id: i64,
+    pub item_id: i64,
     pub description: String,
     pub order_id: i64,
 }
@@ -59,10 +60,20 @@ async fn main() -> Result<()> {
 
     println!("fetched all data after {} milli_sec", now.elapsed().as_millis());
 
-    let orders: Vec<Order> = order_list.par_iter().map(|order| sort_data_orders(order.clone(), &items_list)).collect();
+    let mut items_map: HashMap<i64,Vec<Item>> = HashMap::new();
+    for item in &items_list {
+        items_map.entry(item.order_id).or_insert(Vec::new()).push(item.clone());
+    }
+
+    let orders: Vec<Order> = order_list.par_iter().map(|order| sort_data_orders(order.clone(), &items_map)).collect();
     println!("converted orders after {} milli_sec", now.elapsed().as_millis());
 
-    let customers: Vec<Customer> = customer_list.par_iter().map(|x| sort_data_customers(x.clone(), &orders)).collect();
+    let mut orders_map: HashMap<i64,Vec<Order>> = HashMap::new();
+    for order in &orders {
+        orders_map.entry(order.customer_id).or_insert(Vec::new()).push(order.clone());
+    }
+
+    let customers: Vec<Customer> = customer_list.par_iter().map(|x| sort_data_customers(x.clone(), &orders_map)).collect();
     println!("converted customers after {} sec", now.elapsed().as_millis());
 
     println!("sorted all data after {} milli_sec", now.elapsed().as_millis());
@@ -78,21 +89,19 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn sort_data_customers(mut customer: Customer, order_list: &Vec<Order>) -> Customer {
-    for order in order_list {
-        if customer.id == order.customer_id {
-            customer.orders.push(order.clone())
-        }
+fn sort_data_customers(mut customer: Customer, orders_map: &HashMap<i64, Vec<Order>>) -> Customer {
+    match orders_map.get(&customer.customer_id) {
+        Some(orders) => customer.orders = orders.clone(),
+        _ => (),
     }
     customer
 }
 
-fn sort_data_orders(mut order: Order, items_list: &Vec<Item>) -> Order {
-    for item in items_list {
-        if order.id == item.order_id {
-            order.items.push(item.clone())
-        }
-    }
+fn sort_data_orders(mut order: Order, items_map: &HashMap<i64, Vec<Item>>) -> Order {
+    match items_map.get(&order.order_id) {
+        Some(items) => order.items = items.clone(),
+        _ => (),
+    } ;
     order
 }
 
@@ -123,9 +132,9 @@ async fn fetch_all_customers(pool: &PgPool) -> Result<Vec<Customer>> {
 
     let recs = sqlx::query!(
         r#"
-SELECT id, description
+SELECT customer_id, description
 FROM simple.customer
-ORDER BY id
+ORDER BY customer_id
         "#
     )
         .fetch_all(pool)
@@ -133,7 +142,7 @@ ORDER BY id
 
     for rec in recs {
         customers.push(Customer {
-            id: rec.id,
+            customer_id: rec.customer_id,
             description: rec.description.unwrap(),
             orders: Vec::<Order>::new(),
         }
@@ -148,9 +157,9 @@ async fn fetch_all_orders(pool: &PgPool) -> Result<Vec<Order>> {
 
     let recs = sqlx::query!(
         r#"
-SELECT id, order_description, customer_id
+SELECT order_id, order_description, customer_id
 FROM simple.order
-ORDER BY id
+ORDER BY order_id
         "#
     )
         .fetch_all(pool)
@@ -158,7 +167,7 @@ ORDER BY id
 
     for rec in recs {
         orders.push(Order {
-            id: rec.id,
+            order_id: rec.order_id,
             description: rec.order_description.unwrap(),
             customer_id: rec.customer_id.unwrap(),
             items: vec![],
@@ -174,9 +183,9 @@ async fn fetch_all_items(pool: &PgPool) -> Result<Vec<Item>> {
 
     let recs = sqlx::query!(
         r#"
-SELECT id, item_description, order_id
+SELECT item_id, item_description, order_id
 FROM simple.item
-ORDER BY id
+ORDER BY item_id
         "#
     )
         .fetch_all(pool)
@@ -184,7 +193,7 @@ ORDER BY id
 
     for rec in recs {
         items.push(Item {
-            id: rec.id,
+            item_id: rec.item_id,
             description: rec.item_description.unwrap(),
             order_id: rec.order_id.unwrap(),
         }

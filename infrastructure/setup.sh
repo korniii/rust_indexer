@@ -70,7 +70,7 @@ PGPASSWORD=password psql \
     -h 127.0.0.1 -d example -U postgres \
     -c "INSERT INTO simple.customer(
 	        id, description)
-	        VALUES (generate_series(1,10000), md5(random()::text));"
+	        VALUES (generate_series(1,1000), md5(random()::text));"
 
 
 #sth wrong with random in shell see markdown for correct sql statement in psql
@@ -78,11 +78,11 @@ PGPASSWORD=password psql \
     -h 127.0.0.1 -d example -U postgres \
     -c "INSERT INTO simple.order(
 	        id, order_description, customer_id)
-	        VALUES (generate_series(1,100000), md5(random()::text), (random() * 9999 + 1)::int);"
+	        VALUES (generate_series(1,10000), md5(random()::text), (random() * 999 + 1)::int);"
 
 
 PGPASSWORD=password psql \
     -h 127.0.0.1 -d example -U postgres \
     -c "INSERT INTO simple.item(
 	        id, item_description, order_id)
-	        VALUES (generate_series(1,1000000), md5(random()::text), (random() * 99999 + 1)::int);"
+	        VALUES (generate_series(1,100000), md5(random()::text), (random() * 9999 + 1)::int);"
